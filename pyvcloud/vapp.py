@@ -694,18 +694,25 @@ class VAPP(object):
                 operatingSystemSection = filter(lambda section: section.__class__.__name__== "OperatingSystemSection_Type", sections)[0]
                 os = operatingSystemSection.get_Description().get_valueOf_()
                 customization_section = filter(lambda section: section.__class__.__name__== "GuestCustomizationSectionType", sections)[0]
-                result.append(
-                    {'name': name,
-                     'status': status,
-                     'cpus': cpu_capacity,
-                     'memory': memory_capacity,
-                     'memory_mb': memory_capacity_mb,
-                     'os': os,
-                     'owner': owner,
-                     'admin_password': customization_section.get_AdminPassword(),
-                     'reset_password_required': customization_section.get_ResetPasswordRequired()
-                     }
-                )
+                details = {'name': name,
+                           'status': status,
+                           'cpus': cpu_capacity,
+                           'memory': memory_capacity,
+                           'memory_mb': memory_capacity_mb,
+                           'os': os,
+                           'owner': owner,
+                           'admin_password': customization_section.get_AdminPassword(),
+                           'reset_password_required': customization_section.get_ResetPasswordRequired()
+                           }
+                # vCloud Director virtual hard disk information
+                for vhd in filter(lambda item: item.get_Description().get_valueOf_() == "Hard disk", items):
+                    vhd_index = vhd.get_AddressOnParent().get_valueOf_()
+                    vhd_capacity_mb = int(vhd.get_VirtualQuantity().get_valueOf_()) / 1024 / 1024
+                    details.update({'vhd_{0}_mb'.format(vhd_index): vhd_capacity_mb})
+                #if len(hdds) > 0:
+                #    details.update({'vhdd': vhdds})
+                result.append(details)
+
         Log.debug(self.logger, "details of VMs: %s" % result)
         return result
 
@@ -836,6 +843,56 @@ class VAPP(object):
                     replace("vmw:", "").replace("class:", "rasd:").replace("ResourceType", "rasd:ResourceType")
                 headers = self.headers
                 headers['Content-type'] = 'application/vnd.vmware.vcloud.rasdItem+xml'
+                self.response = Http.put(href, data=body, headers=headers, verify=self.verify, logger=self.logger)
+                if self.response.status_code == requests.codes.accepted:
+                    return taskType.parseString(self.response.content, True)
+                else:
+                    raise Exception(self.response.status_code)
+        raise Exception('can\'t find vm')
+
+
+    def modify_vm_disk(self, vm_name, capacity_mb,  vm_disk_index = 0):
+        """
+        Modify the virtual hard disk allocation for VM.
+
+        :param vm_name: (str): The name of the vm to be customized.
+        :param disk_mb: (int): The virtual hard disk new size.
+        :param vm_disk_index: (int): Index num of disk to be resized.
+        :return: (TaskType) a :class:`pyvcloud.schema.vcd.v1_5.schemas.admin.vCloudEntities.TaskType` object that can be used to monitor the request. \n
+                            if the task cannot be created a debug level log message is generated detailing the reason.
+
+        :raises: Exception: If the named VM cannot be located or another error occured.
+        """
+        children = self.me.get_Children()
+        if children:
+            vms = [vm for vm in children.get_Vm() if vm.name == vm_name]
+            if len(vms) == 1:
+                sections = vm.get_Section()
+                virtualHardwareSection = filter(lambda section: section.__class__.__name__ == "VirtualHardwareSection_Type", sections)[0]
+                href = virtualHardwareSection.get_anyAttributes_().get('{http://www.vmware.com/vcloud/v1.5}href')
+                items = virtualHardwareSection.get_Item()
+                disks = filter(lambda item: item.get_Description().get_valueOf_() == "Hard disk" and
+                                                  int(item.get_AddressOnParent().get_valueOf_()) == vm_disk_index, items)
+                if disks == None or len(disks) != 1:
+                    raise Exception('can\'t find disk {0}'.format(vm_disk_index))
+                diskSection = disks[0]
+                diskSection.get_HostResource()[0].get_anyAttributes_()['{http://www.vmware.com/vcloud/v1.5}capacity'] = capacity_mb
+                vq = diskSection.get_VirtualQuantity()
+                vq.set_valueOf_(capacity_mb * 1024 * 1024)
+                diskSection.set_VirtualQuantity(vq)
+                output = StringIO()
+                virtualHardwareSection.export(output,
+                    0,
+                    name_='rasdItem',
+                    namespacedef_='xmlns="http://www.vmware.com/vcloud/v1.5" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1" xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"',
+                    pretty_print=True)
+                body = output.getvalue().\
+                    replace("<class:", "<vssd:", 4).replace("</class:", "</vssd:", 4).\
+                    replace('vmw:Info', "ovf:Info").replace("vmw:ResourceType", "rasd:ResourceType").\
+                    replace("vmw:", "ovf:").replace("class:", "rasd:")
+
+                headers = self.headers
+                headers['Content-type'] = 'application/vnd.vmware.vcloud.virtualHardwareSection+xml'
                 self.response = Http.put(href, data=body, headers=headers, verify=self.verify, logger=self.logger)
                 if self.response.status_code == requests.codes.accepted:
                     return taskType.parseString(self.response.content, True)

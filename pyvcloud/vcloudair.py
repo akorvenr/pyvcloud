@@ -752,7 +752,11 @@ class VCA(object):
     def _create_instantiateVAppTemplateParams(self, name, template_href,
                                               vm_name, vm_href, deploy,
                                               power, vm_cpus=None,
-                                              vm_memory=None):
+                                              vm_memory=None, vm_disk=None):
+
+        if vm_disk != None and self.service_type != "vdc":
+            raise Exception("VM\'s disk size only implemented to vdc service type")
+
         templateParams = vcloudType.InstantiateVAppTemplateParamsType()
         templateParams.set_name(name)
         templateParams.set_deploy(deploy)
@@ -761,8 +765,7 @@ class VCA(object):
         templateParams.set_Source(source)
         templateParams.set_AllEULAsAccepted("true")
 
-
-        if vm_name or vm_cpus or vm_memory:
+        if vm_name or vm_cpus or vm_memory or vm_disk:
             params = vcloudType.SourcedCompositionItemParamType()
             if ((self.version == "1.0") or (self.version == "1.5")
                     or (self.version == "5.1") or (self.version == "5.5")):
@@ -775,9 +778,9 @@ class VCA(object):
                 params.set_Source(vcloudType.ReferenceType(href=vm_href))
                 templateParams.add_SourcedItem(params)
             if vm_name:
-               gen_params = vcloudType.VmGeneralParamsType()
-               gen_params.set_Name(vm_name)
-               params.set_VmGeneralParams(gen_params)
+                gen_params = vcloudType.VmGeneralParamsType()
+                gen_params.set_Name(vm_name)
+                params.set_VmGeneralParams(gen_params)
             if vm_cpus or vm_memory:
                 inst_param = vcloudType.InstantiationParamsType()
                 hardware = vcloudType.VirtualHardwareSection_Type(id=None)
@@ -807,6 +810,22 @@ class VCA(object):
                     memorydata.set_ResourceType(4)
                     memorydata.set_VirtualQuantity(vAppType.cimInt(valueOf_=vm_memory))
                     hardware.add_Item(memorydata)
+                if vm_disk:
+                    diskdata = vAppType.RASD_Type()
+                    diskdata.original_tagname_ = "ovf:Item"
+                    diskdata.set_required(None)
+                    diskdata.set_AddressOnParent(vAppType.cimString(valueOf_="0"))
+                    diskdata.set_Description(vAppType.cimString(valueOf_="Hard disk"))
+                    diskdata.set_ElementName(vAppType.cimString(valueOf_="Hard disk 1"))
+                    diskdata.set_InstanceID(vAppType.cimInt(valueOf_=2000))
+                    diskdata.set_ResourceType(17)
+                    disk = vcloudType.cimString(valueOf_="")
+                    disk.set_anyAttributes_({"xmlns:vcloud": "http://www.vmware.com/vcloud/v1.5",
+                                            "vcloud:capacity": vm_disk,
+                                            "vcloud:busType": "6",
+                                            "vcloud:busSubType": "lsilogic"})
+                    diskdata.HostResource.append(disk)
+                    hardware.add_Item(diskdata)
 
         return templateParams
 
@@ -866,7 +885,7 @@ class VCA(object):
 
     def create_vapp(self, vdc_name, vapp_name, template_name, catalog_name,
                     network_name=None, network_mode='bridged', vm_name=None,
-                    vm_cpus=None, vm_memory=None, deploy='false',
+                    vm_cpus=None, vm_memory=None, vm_disk=None, deploy='false',
                     poweron='false'):
         """
         Create a new vApp in a virtual data center.
@@ -883,6 +902,7 @@ class VCA(object):
         :param vm_name: (str, optional): The name of the Virtual Machine contained in the vApp.
         :param vm_cpus: (str, optional): The number of virtual CPUs assigned to the VM.
         :param vm_memory: (str, optional): The amount of memory assigned to the VM, specified in MB.
+        :param vm_disk: (str, optional): The size of first virtual hdd disk on VM, specified in MB.
         :param deploy: (bool): True to deploy the vApp immediately after creation, False otherwise.
         :param poweron: (bool): True to poweron the vApp immediately after deployment, False otherwise.
         :return: (task): a :class:`pyvcloud.schema.vcd.v1_5.schemas.admin.vCloudEntities.TaskType`, a handle to the asynchronous process executing the request.
@@ -919,7 +939,7 @@ class VCA(object):
                     template_params = self._create_instantiateVAppTemplateParams(
                         vapp_name, entity.get("href"), vm_name=vm_name,
                         vm_href=vm_href, vm_cpus=vm_cpus, vm_memory=vm_memory,
-                        deploy=deploy, power=poweron)
+                        vm_disk=vm_disk, deploy=deploy, power=poweron)
                     if network_name:
                         pass
                     output = StringIO()
