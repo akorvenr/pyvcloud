@@ -754,7 +754,7 @@ class VCA(object):
                                               power, vm_cpus=None,
                                               vm_memory=None, vm_disk=None):
 
-        if vm_disk != None and self.service_type != "vdc":
+        if vm_disk != None and self.service_type != "vcd":
             raise Exception("VM\'s disk size only implemented to vdc service type")
 
         templateParams = vcloudType.InstantiateVAppTemplateParamsType()
